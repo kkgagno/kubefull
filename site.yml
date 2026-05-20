@@ -1,0 +1,6 @@
+---
+- import_playbook: playbooks/01_prerequisites.yml
+- import_playbook: playbooks/02_loadbalancer.yml
+- import_playbook: playbooks/03_init_first_master.yml
+- import_playbook: playbooks/04_join_masters.yml
+- import_playbook: playbooks/05_join_workers.yml
