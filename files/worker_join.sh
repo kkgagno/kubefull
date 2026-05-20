@@ -1,0 +1,1 @@
+kubeadm join 192.168.4.172:6443 --token hoj3ca.t6vupcz7wo6y95pa --discovery-token-ca-cert-hash sha256:f9b379c090e8cb676b834d5fe528dff00143286222724fcf668b6f796babd5c9  --ignore-preflight-errors=Mem
