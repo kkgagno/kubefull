@@ -1,0 +1,313 @@
+---
+- name: Deploy lightweight k8s exporters for external monitoring
+  hosts: masters[0]
+  become: yes
+  vars:
+    monitoring_host: "{{ hostvars['dev']['ansible_host'] | default('192.168.4.166') }}"
+  tasks:
+    - name: Ensure monitoring namespace exists
+      shell: kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: false
+
+    - name: Create node-exporter DaemonSet
+      shell: |
+        cat <<'EOF' | kubectl apply -f -
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: node-exporter
+          namespace: monitoring
+          labels:
+            app: node-exporter
+        spec:
+          selector:
+            matchLabels:
+              app: node-exporter
+          template:
+            metadata:
+              labels:
+                app: node-exporter
+            spec:
+              hostNetwork: true
+              hostPID: true
+              containers:
+                - name: node-exporter
+                  image: quay.io/prometheus/node-exporter:v1.7.0
+                  args:
+                    - --path.procfs=/host/proc
+                    - --path.sysfs=/host/sys
+                    - --path.rootfs=/host/root
+                    - --web.listen-address=:9100
+                  resources:
+                    requests:
+                      memory: 24Mi
+                      cpu: 10m
+                    limits:
+                      memory: 32Mi
+                      cpu: 100m
+                  volumeMounts:
+                    - name: proc
+                      mountPath: /host/proc
+                      readOnly: true
+                    - name: sys
+                      mountPath: /host/sys
+                      readOnly: true
+                    - name: root
+                      mountPath: /host/root
+                      readOnly: true
+              tolerations:
+                - operator: Exists
+              volumes:
+                - name: proc
+                  hostPath:
+                    path: /proc
+                - name: sys
+                  hostPath:
+                    path: /sys
+                - name: root
+                  hostPath:
+                    path: /
+        EOF
+      changed_when: false
+
+    - name: Create kube-state-metrics ServiceAccount + RBAC + Deployment + Service
+      shell: |
+        cat <<'EOF' | kubectl apply -f -
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: kube-state-metrics
+          namespace: monitoring
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: kube-state-metrics
+        rules:
+          - apiGroups: [""]
+            resources: ["nodes","pods","services","resourcequotas","replicationcontrollers","limitranges","persistentvolumeclaims","persistentvolumes","namespaces","endpoints"]
+            verbs: ["list","watch"]
+          - apiGroups: ["apps"]
+            resources: ["statefulsets","daemonsets","deployments","replicasets"]
+            verbs: ["list","watch"]
+          - apiGroups: ["batch"]
+            resources: ["cronjobs","jobs"]
+            verbs: ["list","watch"]
+          - apiGroups: ["autoscaling"]
+            resources: ["horizontalpodautoscalers"]
+            verbs: ["list","watch"]
+          - apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["list","watch"]
+          - apiGroups: ["storage.k8s.io"]
+            resources: ["storageclasses","volumeattachments"]
+            verbs: ["list","watch"]
+          - apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies","ingresses"]
+            verbs: ["list","watch"]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kube-state-metrics
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: kube-state-metrics
+        subjects:
+          - kind: ServiceAccount
+            name: kube-state-metrics
+            namespace: monitoring
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: kube-state-metrics
+          namespace: monitoring
+          labels:
+            app: kube-state-metrics
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: kube-state-metrics
+          template:
+            metadata:
+              labels:
+                app: kube-state-metrics
+            spec:
+              serviceAccountName: kube-state-metrics
+              containers:
+                - name: kube-state-metrics
+                  image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.12.0
+                  ports:
+                    - containerPort: 8080
+                  resources:
+                    requests:
+                      memory: 32Mi
+                      cpu: 10m
+                    limits:
+                      memory: 128Mi
+                      cpu: 100m
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: kube-state-metrics
+          namespace: monitoring
+        spec:
+          type: NodePort
+          ports:
+            - port: 8080
+              targetPort: 8080
+              nodePort: 30080
+          selector:
+            app: kube-state-metrics
+        EOF
+      changed_when: false
+
+    - name: Create Promtail ConfigMap
+      shell: |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: promtail-config
+          namespace: monitoring
+        data:
+          promtail.yml: |
+            server:
+              http_listen_port: 9080
+              grpc_listen_port: 0
+            positions:
+              filename: /tmp/positions.yaml
+            clients:
+              - url: http://{{ monitoring_host }}:3100/loki/api/v1/push
+                backoff_config:
+                  min_period: 1s
+                  max_period: 10s
+                  max_retries: 10
+            scrape_configs:
+              - job_name: containers
+                static_configs:
+                  - targets:
+                      - localhost
+                    labels:
+                      job: containerlogs
+                      __path__: /var/log/containers/*.log
+                pipeline_stages:
+                  - cri: {}
+              - job_name: system
+                static_configs:
+                  - targets:
+                      - localhost
+                    labels:
+                      job: varlogs
+                      __path__: /var/log/syslog
+        EOF
+      changed_when: false
+
+    - name: Create Promtail ServiceAccount + RBAC + DaemonSet
+      shell: |
+        cat <<'EOF' | kubectl apply -f -
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: promtail
+          namespace: monitoring
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: promtail
+        rules:
+          - apiGroups: [""]
+            resources: ["nodes","nodes/proxy","services","endpoints","pods"]
+            verbs: ["get","list","watch"]
+          - apiGroups: [""]
+            resources: ["configmaps"]
+            verbs: ["get"]
+          - apiGroups: ["extensions"]
+            resources: ["ingresses"]
+            verbs: ["get","list","watch"]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: promtail
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: promtail
+        subjects:
+          - kind: ServiceAccount
+            name: promtail
+            namespace: monitoring
+        ---
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: promtail
+          namespace: monitoring
+        spec:
+          selector:
+            matchLabels:
+              app: promtail
+          template:
+            metadata:
+              labels:
+                app: promtail
+            spec:
+              serviceAccountName: promtail
+              tolerations:
+                - operator: Exists
+              containers:
+                - name: promtail
+                  image: grafana/promtail:2.9.6
+                  args:
+                    - -config.file=/etc/promtail/promtail.yml
+                  resources:
+                    requests:
+                      memory: 32Mi
+                      cpu: 10m
+                    limits:
+                      memory: 128Mi
+                      cpu: 100m
+                  volumeMounts:
+                    - name: promtail-config
+                      mountPath: /etc/promtail
+                    - name: varlog
+                      mountPath: /var/log
+                    - name: containers
+                      mountPath: /var/log/containers
+                      readOnly: true
+              volumes:
+                - name: promtail-config
+                  configMap:
+                    name: promtail-config
+                - name: varlog
+                  hostPath:
+                    path: /var/log
+                - name: containers
+                  hostPath:
+                    path: /var/log/containers
+        EOF
+      changed_when: false
+
+    - name: Check node-exporter status
+      shell: kubectl get daemonset node-exporter -n monitoring -o jsonpath='{.status.numberReady}/{.status.desiredNumberScheduled}'
+      register: node_exporter_ready
+      changed_when: false
+
+    - name: Report node-exporter status
+      debug:
+        msg: "node-exporter ready: {{ node_exporter_ready.stdout }}"
+
+    - name: Check promtail status
+      shell: kubectl get daemonset promtail -n monitoring -o jsonpath='{.status.numberReady}/{.status.desiredNumberScheduled}'
+      register: promtail_ready
+      changed_when: false
+
+    - name: Report promtail status
+      debug:
+        msg: "promtail ready: {{ promtail_ready.stdout }}"

@@ -1,0 +1,156 @@
+---
+# Kubescape Kubernetes Security Scan
+# Installs kubescape on all cluster nodes and runs a cluster-wide
+# security scan from a master node.  Only one scan is needed because
+# kubescape queries the API server for the entire cluster state.
+#
+# Reports are fetched back to the controller under:
+#   reports/kubescape/
+#
+- name: Install kubescape on all cluster nodes
+  hosts: k8s_cluster
+  become: yes
+  gather_facts: yes
+
+  vars:
+    kubescape_version: "v4.0.5"
+    kubescape_deb_url: "https://github.com/kubescape/kubescape/releases/download/{{ kubescape_version }}/kubescape_{{ kubescape_version | regex_replace('^v','') }}_linux_amd64.deb"
+
+  tasks:
+    - name: Ensure curl is present
+      ansible.builtin.apt:
+        name: curl
+        state: present
+        update_cache: yes
+
+    - name: Download kubescape .deb package
+      ansible.builtin.get_url:
+        url: "{{ kubescape_deb_url }}"
+        dest: "/tmp/kubescape.deb"
+        mode: '0644'
+      register: ks_download
+
+    - name: Install kubescape
+      ansible.builtin.apt:
+        deb: "/tmp/kubescape.deb"
+        state: present
+
+    - name: Verify kubescape version
+      ansible.builtin.command: kubescape version
+      register: ks_version
+      changed_when: false
+
+    - name: Show installed version
+      ansible.builtin.debug:
+        var: ks_version.stdout
+
+- name: Run kubescape cluster scan from first master only
+  hosts: masters
+  become: yes
+  gather_facts: no
+  run_once: yes
+
+  vars:
+    reports_dir: "/tmp/kubescape-reports"
+    local_reports_base: "{{ playbook_dir }}/../reports/kubescape"
+
+  tasks:
+    - name: Create remote reports directory
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Run kubescape comprehensive scan (HTML)
+      ansible.builtin.command: >-
+        kubescape scan
+        --format html
+        --output {{ reports_dir }}/kubescape-full-scan.html
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      ignore_errors: yes
+      register: ks_full_html
+
+    - name: Run kubescape comprehensive scan (JSON for summary)
+      ansible.builtin.command: >-
+        kubescape scan
+        --format json
+        --output {{ reports_dir }}/kubescape-full-scan.json
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      ignore_errors: yes
+      register: ks_full_json
+      when: ks_full_html.rc is defined and ks_full_html.rc == 0
+
+    - name: Run kubescape NSA/CISA framework scan (HTML)
+      ansible.builtin.command: >-
+        kubescape scan framework nsa
+        --format html
+        --output {{ reports_dir }}/kubescape-nsa.html
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      ignore_errors: yes
+      register: ks_nsa_html
+
+    - name: Run kubescape NSA/CISA framework scan (JSON for summary)
+      ansible.builtin.command: >-
+        kubescape scan framework nsa
+        --format json
+        --output {{ reports_dir }}/kubescape-nsa.json
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      ignore_errors: yes
+      register: ks_nsa_json
+      when: ks_nsa_html.rc is defined and ks_nsa_html.rc == 0
+
+    - name: Run kubescape MITRE ATT&CK framework scan (HTML)
+      ansible.builtin.command: >-
+        kubescape scan framework mitre
+        --format html
+        --output {{ reports_dir }}/kubescape-mitre.html
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      ignore_errors: yes
+      register: ks_mitre_html
+
+    - name: Run kubescape MITRE ATT&ACK framework scan (JSON for summary)
+      ansible.builtin.command: >-
+        kubescape scan framework mitre
+        --format json
+        --output {{ reports_dir }}/kubescape-mitre.json
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      ignore_errors: yes
+      register: ks_mitre_json
+      when: ks_mitre_html.rc is defined and ks_mitre_html.rc == 0
+
+    - name: Create local report directory on controller
+      ansible.builtin.file:
+        path: "{{ local_reports_base }}/cluster"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      become: no
+
+    - name: Fetch reports from master to controller
+      ansible.builtin.fetch:
+        src: "{{ item }}"
+        dest: "{{ local_reports_base }}/cluster/"
+        flat: yes
+      loop:
+        - "{{ reports_dir }}/kubescape-full-scan.html"
+        - "{{ reports_dir }}/kubescape-full-scan.json"
+        - "{{ reports_dir }}/kubescape-nsa.html"
+        - "{{ reports_dir }}/kubescape-nsa.json"
+        - "{{ reports_dir }}/kubescape-mitre.html"
+        - "{{ reports_dir }}/kubescape-mitre.json"
+      ignore_errors: yes
+
+    - name: Display scan completion summary
+      ansible.builtin.debug:
+        msg: |
+          Kubescape cluster scans complete on {{ inventory_hostname }}.
+          Reports saved to: {{ local_reports_base }}/cluster/
+          Full scan rc:   {{ ks_full_html.rc | default('skipped') }}
+          NSA scan rc:    {{ ks_nsa_html.rc | default('skipped') }}
+          MITRE scan rc:  {{ ks_mitre_html.rc | default('skipped') }}

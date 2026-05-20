@@ -1,0 +1,189 @@
+---
+- name: Deploy Kubernetes Remote Desktops
+  hosts: masters[0]
+  become: yes
+  vars:
+    desktop_namespace: desktops
+    desktop_replicas: 3
+
+  tasks:
+    - name: Ensure desktops namespace exists
+      shell: |
+        kubectl get namespace {{ desktop_namespace }} >/dev/null 2>&1 || kubectl create namespace {{ desktop_namespace }}
+      register: ns_result
+      changed_when: "'created' in ns_result.stdout"
+
+    - name: Deploy Firefox browser pods
+      shell: |
+        kubectl apply -n {{ desktop_namespace }} -f - <<'K8S'
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: firefox
+        spec:
+          replicas: {{ desktop_replicas }}
+          selector:
+            matchLabels:
+              app: firefox
+          template:
+            metadata:
+              labels:
+                app: firefox
+            spec:
+              containers:
+              - name: firefox
+                image: jlesage/firefox:latest
+                ports:
+                - containerPort: 5800
+                  name: http
+                env:
+                - name: ENABLE_CJK_FONT
+                  value: "1"
+                resources:
+                  requests:
+                    memory: 256Mi
+                    cpu: 250m
+                  limits:
+                    memory: 1Gi
+                    cpu: 1000m
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: firefox
+        spec:
+          selector:
+            app: firefox
+          ports:
+          - port: 5800
+            targetPort: 5800
+            name: http
+          type: NodePort
+        K8S
+      register: firefox_deploy
+
+    - name: Deploy lightweight XFCE desktop pods
+      shell: |
+        kubectl apply -n {{ desktop_namespace }} -f - <<'K8S'
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: xfce-desktop
+        spec:
+          replicas: {{ desktop_replicas }}
+          selector:
+            matchLabels:
+              app: xfce-desktop
+          template:
+            metadata:
+              labels:
+                app: xfce-desktop
+            spec:
+              containers:
+              - name: desktop
+                image: dorowu/ubuntu-desktop-lxde-vnc:latest
+                ports:
+                - containerPort: 80
+                  name: http
+                env:
+                - name: USER
+                  value: user
+                - name: PASSWORD
+                  value: desktop
+                resources:
+                  requests:
+                    memory: 512Mi
+                    cpu: 250m
+                  limits:
+                    memory: 2Gi
+                    cpu: 1000m
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: xfce-desktop
+        spec:
+          selector:
+            app: xfce-desktop
+          ports:
+          - port: 80
+            targetPort: 80
+            name: http
+          type: NodePort
+        K8S
+      register: xfce_deploy
+
+    - name: Wait for Firefox pods to be ready
+      shell: |
+        kubectl wait --namespace={{ desktop_namespace }} \
+          --for=condition=ready pod \
+          --selector=app=firefox \
+          --timeout=180s
+      register: firefox_wait
+      retries: 3
+      delay: 10
+      until: firefox_wait.rc == 0
+
+    - name: Wait for XFCE pods to be ready
+      shell: |
+        kubectl wait --namespace={{ desktop_namespace }} \
+          --for=condition=ready pod \
+          --selector=app=xfce-desktop \
+          --timeout=180s
+      register: xfce_wait
+      retries: 3
+      delay: 10
+      until: xfce_wait.rc == 0
+
+    - name: Get NodePort URLs
+      shell: |
+        FF_PORT=$(kubectl get svc firefox -n {{ desktop_namespace }} -o jsonpath='{.spec.ports[0].nodePort}')
+        XFCE_PORT=$(kubectl get svc xfce-desktop -n {{ desktop_namespace }} -o jsonpath='{.spec.ports[0].nodePort}')
+        echo "Firefox NodePort: $FF_PORT"
+        echo "XFCE NodePort: $XFCE_PORT"
+      register: nodeports
+      changed_when: false
+
+    - name: Report desktop access URLs
+      debug:
+        msg:
+          - "==============================================="
+          - "Kubernetes Remote Desktops deployed!"
+          - "==============================================="
+          - ""
+          - "Firefox Browser Pods:"
+          - "  http://192.168.4.168:{{ nodeports.stdout_lines[0].split(': ')[1] }}/"
+          - "  http://192.168.4.167:{{ nodeports.stdout_lines[0].split(': ')[1] }}/"
+          - "  http://192.168.4.171:{{ nodeports.stdout_lines[0].split(': ')[1] }}/"
+          - "  http://192.168.4.170:{{ nodeports.stdout_lines[0].split(': ')[1] }}/"
+          - "  http://192.168.4.169:{{ nodeports.stdout_lines[0].split(': ')[1] }}/"
+          - "  http://192.168.4.172:{{ nodeports.stdout_lines[0].split(': ')[1] }}/"
+          - ""
+          - "XFCE Desktop Pods (user=desktop, password=desktop):"
+          - "  http://192.168.4.168:{{ nodeports.stdout_lines[1].split(': ')[1] }}/"
+          - "  http://192.168.4.167:{{ nodeports.stdout_lines[1].split(': ')[1] }}/"
+          - "  http://192.168.4.171:{{ nodeports.stdout_lines[1].split(': ')[1] }}/"
+          - "  http://192.168.4.170:{{ nodeports.stdout_lines[1].split(': ')[1] }}/"
+          - "  http://192.168.4.169:{{ nodeports.stdout_lines[1].split(': ')[1] }}/"
+          - "  http://192.168.4.172:{{ nodeports.stdout_lines[1].split(': ')[1] }}/"
+          - ""
+          - "Note: Firefox pods are already running and accessible."
+          - "XFCE pods use noVNC in browser (no client needed)."
+          - "Scale replicas by changing desktop_replicas variable."
+          - "==============================================="
+
+    - name: Show current desktop pods
+      shell: |
+        echo "=== Desktop Pods ==="
+        kubectl get pods -n {{ desktop_namespace }} -o wide
+        echo ""
+        echo "=== Desktop Services ==="
+        kubectl get svc -n {{ desktop_namespace }}
+      register: pod_status
+      changed_when: false
+
+    - name: Display pod status
+      debug:
+        var: pod_status.stdout_lines

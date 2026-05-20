@@ -1,0 +1,67 @@
+---
+# Kubescape Summary Report Generator
+# Parses Kubescape HTML reports and generates per-node summary HTML files
+# plus a consolidated index. Run AFTER playbook 32_kubescape_scan.yml.
+#
+# Reports consumed:  reports/kubescape/<host>/*.html
+# Reports produced:  reports/kubescape-summaries/<host>.html
+#                    reports/kubescape-index.html
+#
+- name: Generate Kubescape Summary Reports
+  hosts: localhost
+  gather_facts: no
+  become: no
+
+  vars:
+    reports_base: "{{ playbook_dir | dirname }}/reports"
+    scripts_dir: "{{ playbook_dir | dirname }}/scripts"
+
+  tasks:
+    - name: Ensure summary output directory exists
+      ansible.builtin.file:
+        path: "{{ reports_base }}/kubescape-summaries"
+        state: directory
+        mode: '0755'
+
+    - name: Find per-host Kubescape HTML report directories
+      ansible.builtin.find:
+        paths: "{{ reports_base }}/kubescape"
+        file_type: directory
+        recurse: no
+      register: kubescape_dirs
+
+    - name: Generate per-node Kubescape summary HTML
+      ansible.builtin.command: >
+        python3 {{ scripts_dir }}/parse_kubescape_results.py
+        --host cluster
+        --full {{ reports_base }}/kubescape/cluster/kubescape-full-scan.html
+        --nsa {{ reports_base }}/kubescape/cluster/kubescape-nsa.html
+        --mitre {{ reports_base }}/kubescape/cluster/kubescape-mitre.html
+        --output {{ reports_base }}/kubescape-summaries/cluster.html
+      when: kubescape_dirs.files | length > 0
+      ignore_errors: yes
+      register: ks_summaries
+
+    - name: Generate Kubescape master index
+      ansible.builtin.template:
+        dest: "{{ reports_base }}/kubescape-index.html"
+        src: "{{ playbook_dir | dirname }}/templates/kubescape_index.html.j2"
+      vars:
+        kubescape_summary_hosts: "{{ kubescape_dirs.files | map(attribute='path') | map('basename') | list }}"
+    - name: Generate legacy JSON-based master summary (if JSON exists)
+      ansible.builtin.command:
+        cmd: "python3 {{ scripts_dir }}/generate_security_summaries.py"
+        chdir: "{{ playbook_dir | dirname }}"
+      environment:
+        REPORTS_DIR: "{{ reports_base }}"
+      ignore_errors: yes
+      register: legacy_gen
+
+    - name: Show summary
+      ansible.builtin.debug:
+        msg: |
+          Kubescape summaries generated:
+          Per-node: {{ reports_base }}/kubescape-summaries/
+          Index:    {{ reports_base }}/kubescape-index.html
+          Legacy:   {{ reports_base }}/summary_kubescape.html
+          Hosts:    {{ kubescape_dirs.files | default([]) | length }}
