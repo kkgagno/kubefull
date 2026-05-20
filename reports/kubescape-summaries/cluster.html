@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Kubescape Security Summary - cluster</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --text: #e0e0e0;
+    --accent: #0f3460;
+    --green: #00d26a;
+    --red: #e94560;
+    --orange: #f39c12;
+    --yellow: #f1c40f;
+    --blue: #3498db;
+  }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 2rem;
+    max-width: 80rem;
+    margin: 0 auto;
+  }
+  h1, h2, h3 {
+    color: #fff;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 0.5rem;
+  }
+  .header {
+    background: var(--card);
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .header-info {
+    font-size: 0.9rem;
+    color: #aaa;
+  }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .card {
+    background: var(--card);
+    padding: 1.5rem;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  .metric {
+    font-size: 2.2rem;
+    font-weight: bold;
+    color: var(--blue);
+  }
+  .metric.green { color: var(--green); }
+  .metric.red { color: var(--red); }
+  .metric.orange { color: var(--orange); }
+  .metric.yellow { color: var(--yellow); }
+  .label {
+    font-size: 0.85rem;
+    color: #aaa;
+    margin-top: 0.5rem;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    text-transform: uppercase;
+  }
+  .badge-green { background: var(--green); color: #000; }
+  .badge-red { background: var(--red); color: #fff; }
+  .badge-orange { background: var(--orange); color: #000; }
+  .badge-yellow { background: var(--yellow); color: #000; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    background: var(--card);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th, td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--accent);
+  }
+  th {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  tr:hover { background: rgba(255,255,255,0.03); }
+  .recommendations {
+    background: var(--card);
+    padding: 1.5rem 2rem;
+    border-radius: 8px;
+    line-height: 1.8;
+  }
+  .recommendations li {
+    margin-bottom: 0.5rem;
+  }
+  code {
+    background: #2a2a4a;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-family: monospace;
+  }
+  .btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  .btn:hover { background: var(--blue); }
+  .report-iframe {
+    width: 100%;
+    height: 600px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    margin-top: 1rem;
+  }
+  .tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .tab {
+    background: var(--card);
+    border: none;
+    color: var(--text);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .tab.active {
+    background: var(--blue);
+    color: #fff;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Kubescape Security Summary</h1>
+      <div class="header-info">Host: <strong>cluster</strong> | Scanned: 2026-05-02 16:27:10</div>
+    </div>
+  </div>
+
+  <h2>Scan Results Overview</h2>
+  <div class="summary-grid">
+    
+        <div class="card">
+          <div class="metric red">35/48</div>
+          <div class="label">Full Scan Failed Controls</div>
+          <div class="badge badge-red">CRITICAL RISK</div>
+          <div style="font-size:0.8rem; margin-top:0.5rem; color:#aaa;">Skipped: 2</div>
+          <div style="margin-top:0.75rem;"><a class="btn" href="/home/keith/k8s-cluster/reports/kubescape/cluster/kubescape-full-scan.html" target="_blank">View Full Report</a></div>
+        </div>
+        <div class="card">
+          <div class="metric yellow">19/26</div>
+          <div class="label">NSA/CISA Failed Controls</div>
+          <div class="badge badge-yellow">MEDIUM RISK</div>
+          <div style="font-size:0.8rem; margin-top:0.5rem; color:#aaa;">Skipped: 2</div>
+          <div style="margin-top:0.75rem;"><a class="btn" href="/home/keith/k8s-cluster/reports/kubescape/cluster/kubescape-nsa.html" target="_blank">View Full Report</a></div>
+        </div>
+        <div class="card">
+          <div class="metric yellow">18/26</div>
+          <div class="label">MITRE ATT&CK Failed Controls</div>
+          <div class="badge badge-yellow">MEDIUM RISK</div>
+          <div style="font-size:0.8rem; margin-top:0.5rem; color:#aaa;">Skipped: 2</div>
+          <div style="margin-top:0.75rem;"><a class="btn" href="/home/keith/k8s-cluster/reports/kubescape/cluster/kubescape-mitre.html" target="_blank">View Full Report</a></div>
+        </div>
+  </div>
+
+  <h2>Top Failed Controls (Across All Frameworks)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Severity</th>
+        <th>Control Name</th>
+        <th>Failed Resources</th>
+        <th>All Resources</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+        <tr>
+          <td><span class="badge badge-red">CRITICAL</span></td>
+          <td>API server insecure port is enabled</td>
+          <td>0</td>
+          <td>3</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-red">CRITICAL</span></td>
+          <td>Disable anonymous access to Kubelet service</td>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-red">CRITICAL</span></td>
+          <td>Enforce Kubelet client TLS authentication</td>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Anonymous access enabled</td>
+          <td>1</td>
+          <td>83</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Applications credentials in configuration files</td>
+          <td>5</td>
+          <td>56</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Authenticated user has sensitive permissions</td>
+          <td>0</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>CVE-2021-25742-nginx-ingress-snippet-annotation-vulnerability</td>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Ensure CPU limits are set</td>
+          <td>11</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Ensure memory limits are set</td>
+          <td>11</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>External facing</td>
+          <td>7</td>
+          <td>43</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Host PID/IPC privileges</td>
+          <td>2</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>HostNetwork access</td>
+          <td>3</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>HostPath mount</td>
+          <td>4</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Insecure capabilities</td>
+          <td>1</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>List Kubernetes secrets</td>
+          <td>12</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Minimize wildcard use in Roles and ClusterRoles</td>
+          <td>6</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Privileged container</td>
+          <td>1</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>RBAC enabled</td>
+          <td>0</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">HIGH</span></td>
+          <td>Writable hostPath mount</td>
+          <td>2</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Access container service account</td>
+          <td>22</td>
+          <td>64</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Administrative Roles</td>
+          <td>6</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Allow privilege escalation</td>
+          <td>10</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Audit logs enabled</td>
+          <td>1</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Automatic mapping of service account</td>
+          <td>26</td>
+          <td>88</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>CVE-2021-25741 - Using symlink for arbitrary host file system access.</td>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Cluster internal networking</td>
+          <td>7</td>
+          <td>11</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Container hostPort</td>
+          <td>0</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>CoreDNS poisoning</td>
+          <td>6</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Delete Kubernetes events</td>
+          <td>6</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Exposed sensitive interfaces</td>
+          <td>1</td>
+          <td>3</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Ingress and Egress blocked</td>
+          <td>16</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Linux hardening</td>
+          <td>10</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Minimize access to create pods</td>
+          <td>7</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Missing network policy</td>
+          <td>19</td>
+          <td>56</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Mount service principal</td>
+          <td>0</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Nginx Ingress Controller End of Life</td>
+          <td>0</td>
+          <td>17</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Non-root containers</td>
+          <td>14</td>
+          <td>30</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Portforwarding privileges</td>
+          <td>6</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Prevent containers from allowing command execution</td>
+          <td>7</td>
+          <td>91</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-yellow">MEDIUM</span></td>
+          <td>Roles with delete capabilities</td>
+          <td>11</td>
+          <td>91</td>
+        </tr>
+    </tbody>
+  </table>
+
+  <h2>Detailed Reports</h2>
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('tab-full')">Full Scan</button>
+    <button class="tab" onclick="showTab('tab-nsa')">NSA/CISA</button>
+    <button class="tab" onclick="showTab('tab-mitre')">MITRE ATT&CK</button>
+  </div>
+
+  <div id="tab-full" class="tab-content active">
+    <iframe class='report-iframe' src='/home/keith/k8s-cluster/reports/kubescape/cluster/kubescape-full-scan.html'></iframe>
+  </div>
+  <div id="tab-mitre" class="tab-content">
+    <iframe class='report-iframe' src='/home/keith/k8s-cluster/reports/kubescape/cluster/kubescape-mitre.html'></iframe>
+  </div>
+  <div id="tab-nsa" class="tab-content">
+    <iframe class='report-iframe' src='/home/keith/k8s-cluster/reports/kubescape/cluster/kubescape-nsa.html'></iframe>
+  </div>
+
+  <h2>Recommendations</h2>
+  
+    <ul class="recommendations">
+      <li><strong>Enable RBAC audit logging:</strong> Configure the API server with <code>--audit-log-path</code> and <code>--audit-policy-file</code> to capture authorization decisions</li>
+      <li><strong>Remove anonymous access:</strong> Disable anonymous authentication on the API server (<code>--anonymous-auth=false</code>) or bind anonymous to a restricted RBAC role</li>
+      <li><strong>Enable etcd encryption:</strong> Configure etcd encryption at rest using <code>aescbc</code> or <code>secretbox</code>; add <code>EncryptionConfiguration</code> to API server</li>
+      <li><strong>Restrict privileged containers:</strong> Use Pod Security Standards (Restricted) or OPA/Gatekeeper to prevent pods from running as privileged</li>
+      <li><strong>Remove hostPath volumes:</strong> Audit workloads for unnecessary <code>hostPath</code> mounts; replace with PVCs or emptyDir where possible</li>
+      <li><strong>Apply least-privilege RBAC:</strong> Replace cluster-admin bindings with namespace-scoped roles; audit service accounts for excessive permissions</li>
+      <li><strong>Enable Pod Security Admission:</strong> Enforce the <code>restricted</code> Pod Security Standard cluster-wide</li>
+      <li><strong>Rotate kubeconfig tokens:</strong> Regularly rotate service account tokens and ensure short-lived tokens are used where possible</li>
+      <li><strong>Network policies:</strong> Apply default-deny network policies in all namespaces and explicitly allow required traffic</li>
+      <li><strong>Scan container images:</strong> Integrate Trivy or Clair into CI/CD to catch CVEs before deployment</li>
+    </ul>
+    
+
+  <footer style="text-align:center; color:#666; margin-top:3rem; font-size:0.8rem;">
+    Generated by Kubescape Reporter | Ansible + k8s-security-reporting skill
+  </footer>
+
+  <script>
+    function showTab(id) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      event.target.classList.add('active');
+    }
+  </script>
+</body>
+</html>
