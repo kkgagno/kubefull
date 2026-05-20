@@ -1,0 +1,144 @@
+---
+- name: Setup Docker and monitoring stack on external host
+  hosts: monitoring
+  become: yes
+  vars:
+    monitoring_dir: "/home/ansible/monitoring"
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3
+          - python3-pip
+        state: present
+
+    - name: Add Docker GPG key
+      ansible.builtin.shell:
+        cmd: |
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+        creates: /etc/apt/keyrings/docker.asc
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Enable and start Docker
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Add ansible user to docker group
+      user:
+        name: ansible
+        groups: docker
+        append: yes
+
+    - name: Create monitoring directory
+      file:
+        path: "{{ monitoring_dir }}"
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: '0755'
+
+    - name: Copy docker-compose file
+      copy:
+        src: ../files/docker-compose.monitoring.yml
+        dest: "{{ monitoring_dir }}/docker-compose.yml"
+        owner: ansible
+        group: ansible
+        mode: '0644'
+
+    - name: Copy Prometheus config
+      copy:
+        src: ../files/prometheus.yml
+        dest: "{{ monitoring_dir }}/prometheus.yml"
+        owner: ansible
+        group: ansible
+        mode: '0644'
+
+    - name: Copy Loki config
+      copy:
+        src: ../files/loki-config.yml
+        dest: "{{ monitoring_dir }}/loki-config.yml"
+        owner: ansible
+        group: ansible
+        mode: '0644'
+
+    - name: Copy Alertmanager config
+      copy:
+        src: ../files/alertmanager.yml
+        dest: "{{ monitoring_dir }}/alertmanager.yml"
+        owner: ansible
+        group: ansible
+        mode: '0644'
+
+    - name: Copy Grafana datasources provisioning
+      copy:
+        src: ../files/grafana-datasources.yml
+        dest: "{{ monitoring_dir }}/grafana-datasources.yml"
+        owner: ansible
+        group: ansible
+        mode: '0644'
+
+    - name: Copy Grafana dashboard provider provisioning
+      copy:
+        src: ../files/grafana-dashboard-provider.yml
+        dest: "{{ monitoring_dir }}/grafana-dashboard-provider.yml"
+        owner: ansible
+        group: ansible
+        mode: '0644'
+
+    - name: Create Grafana dashboards directory
+      file:
+        path: "{{ monitoring_dir }}/dashboards"
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: '0755'
+
+    - name: Copy dashboards
+      copy:
+        src: "{{ item }}"
+        dest: "{{ monitoring_dir }}/dashboards/"
+        owner: ansible
+        group: ansible
+        mode: '0644'
+      with_fileglob:
+        - "../files/grafana-dashboards/*.json"
+      ignore_errors: yes
+
+    - name: Pull and start monitoring stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ monitoring_dir }}"
+        state: present
+        pull: always
+      become: yes
+      become_user: ansible
+      environment:
+        DOCKER_HOST: unix:///var/run/docker.sock

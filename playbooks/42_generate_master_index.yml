@@ -1,0 +1,43 @@
+---
+# Master Security Reports Index
+# Generates a unified index.html linking OpenSCAP and Kubescape summaries.
+# Run after playbooks 40 and 41.
+#
+# Output: reports/index.html
+#
+- name: Generate Master Security Reports Index
+  hosts: localhost
+  gather_facts: no
+  become: no
+
+  vars:
+    reports_base: "{{ playbook_dir | dirname }}/reports"
+
+  tasks:
+    - name: Check if OpenSCAP reports exist
+      ansible.builtin.stat:
+        path: "{{ reports_base }}/openscap-index.html"
+      register: oscap_stat
+
+    - name: Check if Kubescape reports exist
+      ansible.builtin.stat:
+        path: "{{ reports_base }}/summary_kubescape.html"
+      register: ks_stat
+
+    - name: Check if Kubescape summary reports exist
+      ansible.builtin.stat:
+        path: "{{ reports_base }}/kubescape-summaries/master1.html"
+      register: ks_summary_stat
+
+    - name: Generate master index
+      ansible.builtin.template:
+        dest: "{{ reports_base }}/index.html"
+        src: "{{ playbook_dir | dirname }}/templates/master_index.html.j2"
+      vars:
+        has_openscap: "{{ oscap_stat.stat.exists | default(false) }}"
+        has_kubescape: "{{ ks_stat.stat.exists | default(false) }}"
+        has_kubescape_summary: "{{ ks_summary_stat.stat.exists | default(false) }}"
+
+    - name: Show index path
+      ansible.builtin.debug:
+        msg: "Master index generated: {{ reports_base }}/index.html"

@@ -1,0 +1,352 @@
+---
+- name: Deploy monitoring stack (Prometheus, Grafana, Loki)
+  hosts: master1
+  become: yes
+  vars:
+    monitoring_namespace: monitoring
+  tasks:
+    - name: Ensure Helm is installed
+      shell: |
+        if ! command -v helm &> /dev/null; then
+          curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v3.20.2-linux-amd64.tar.gz
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          chmod +x /usr/local/bin/helm
+        fi
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Add Prometheus Helm repository
+      shell: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      register: repo_add
+      changed_when: "'already exists' not in repo_add.stderr"
+      ignore_errors: yes
+
+    - name: Update Helm repositories
+      shell: helm repo update
+      changed_when: false
+
+    - name: Create monitoring namespace
+      shell: kubectl create namespace {{ monitoring_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: false
+
+    - name: Deploy kube-prometheus-stack
+      shell: |
+        cat > /tmp/prom-values.yaml <<'EOF'
+        prometheus:
+          prometheusSpec:
+            retention: 7d
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+              limits:
+                memory: 512Mi
+                cpu: 500m
+        alertmanager:
+          enabled: true
+          config:
+            global:
+              resolve_timeout: 5m
+            route:
+              receiver: default
+              group_wait: 10s
+              group_interval: 10s
+              repeat_interval: 12h
+            receivers:
+              - name: default
+        grafana:
+          enabled: true
+          adminPassword: admin
+          service:
+            type: NodePort
+            nodePort: 30000
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi
+              cpu: 200m
+          additionalDataSources:
+            - name: Loki
+              type: loki
+              url: http://loki.{{ monitoring_namespace }}.svc.cluster.local:3100
+              access: proxy
+              editable: false
+        kubeStateMetrics:
+          enabled: true
+        nodeExporter:
+          enabled: true
+        EOF
+        helm upgrade --install kube-prometheus prometheus-community/kube-prometheus-stack \
+          --namespace {{ monitoring_namespace }} \
+          --values /tmp/prom-values.yaml \
+          --wait --timeout 10m
+      register: prom_deploy
+      ignore_errors: yes
+
+    - name: Deploy Loki and Promtail via manifests
+      shell: |
+        cat > /tmp/loki-manifests.yaml <<'EOF'
+        ---
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: loki-config
+          namespace: monitoring
+        data:
+          loki.yaml: |
+            auth_enabled: false
+            server:
+              http_listen_port: 3100
+            common:
+              path_prefix: /loki
+              storage:
+                filesystem:
+                  chunks_directory: /loki/chunks
+                  rules_directory: /loki/rules
+              replication_factor: 1
+              ring:
+                kvstore:
+                  store: inmemory
+            schema_config:
+              configs:
+                - from: 2020-05-15
+                  store: boltdb-shipper
+                  object_store: filesystem
+                  schema: v11
+                  index:
+                    prefix: index_
+                    period: 24h
+            storage_config:
+              boltdb_shipper:
+                active_index_directory: /loki/index
+                cache_location: /loki/cache
+                shared_store: filesystem
+              filesystem:
+                directory: /loki/chunks
+            limits_config:
+              retention_period: 168h
+            compactor:
+              working_directory: /loki/compactor
+              shared_store: filesystem
+              retention_enabled: true
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: loki
+          namespace: monitoring
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: loki
+          template:
+            metadata:
+              labels:
+                app: loki
+            spec:
+              containers:
+              - name: loki
+                image: grafana/loki:2.9.3
+                args:
+                  - -config.file=/etc/loki/loki.yaml
+                ports:
+                - containerPort: 3100
+                  name: http
+                resources:
+                  requests:
+                    memory: 128Mi
+                    cpu: 50m
+                  limits:
+                    memory: 512Mi
+                    cpu: 500m
+                volumeMounts:
+                - name: config
+                  mountPath: /etc/loki
+                - name: storage
+                  mountPath: /loki
+              volumes:
+              - name: config
+                configMap:
+                  name: loki-config
+              - name: storage
+                emptyDir: {}
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: loki
+          namespace: monitoring
+        spec:
+          selector:
+            app: loki
+          ports:
+          - port: 3100
+            targetPort: 3100
+            name: http
+        ---
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: promtail-config
+          namespace: monitoring
+        data:
+          promtail.yaml: |
+            server:
+              http_listen_port: 9080
+              grpc_listen_port: 0
+            positions:
+              filename: /tmp/positions.yaml
+            clients:
+              - url: http://loki:3100/loki/api/v1/push
+            scrape_configs:
+              - job_name: kubernetes-pods
+                kubernetes_sd_configs:
+                  - role: pod
+                pipeline_stages:
+                  - docker: {}
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_node_name]
+                    target_label: __host__
+                  - action: labelmap
+                    regex: __meta_kubernetes_pod_label_(.+)
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+                  - source_labels: [__meta_kubernetes_pod_name]
+                    target_label: pod
+                  - source_labels: [__meta_kubernetes_pod_container_name]
+                    target_label: container
+        ---
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: promtail
+          namespace: monitoring
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: promtail
+        rules:
+        - apiGroups: ['']
+          resources:
+          - pods
+          - nodes
+          - nodes/proxy
+          verbs: [get, list, watch]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: promtail
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: promtail
+        subjects:
+        - kind: ServiceAccount
+          name: promtail
+          namespace: monitoring
+        ---
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: promtail
+          namespace: monitoring
+        spec:
+          selector:
+            matchLabels:
+              app: promtail
+          template:
+            metadata:
+              labels:
+                app: promtail
+            spec:
+              serviceAccountName: promtail
+              tolerations:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
+              containers:
+              - name: promtail
+                image: grafana/promtail:2.9.3
+                args:
+                  - -config.file=/etc/promtail/promtail.yaml
+                env:
+                - name: HOSTNAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+                volumeMounts:
+                - name: config
+                  mountPath: /etc/promtail
+                - name: logs
+                  mountPath: /var/log
+                - name: containers
+                  mountPath: /var/lib/docker/containers
+                  readOnly: true
+                - name: pods
+                  mountPath: /var/log/pods
+                  readOnly: true
+                resources:
+                  requests:
+                    memory: 64Mi
+                    cpu: 25m
+                  limits:
+                    memory: 128Mi
+                    cpu: 200m
+              volumes:
+              - name: config
+                configMap:
+                  name: promtail-config
+              - name: logs
+                hostPath:
+                  path: /var/log
+              - name: containers
+                hostPath:
+                  path: /var/lib/docker/containers
+              - name: pods
+                hostPath:
+                  path: /var/log/pods
+        EOF
+        kubectl apply -f /tmp/loki-manifests.yaml
+      register: loki_deploy
+      ignore_errors: yes
+
+    - name: Wait for Grafana pod to be ready
+      shell: |
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=grafana -n {{ monitoring_namespace }} --timeout=300s
+      register: grafana_wait
+      changed_when: false
+      ignore_errors: yes
+      when: prom_deploy.rc == 0
+
+    - name: Wait for Prometheus pod to be ready
+      shell: |
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus -n {{ monitoring_namespace }} --timeout=300s
+      register: prom_wait
+      changed_when: false
+      ignore_errors: yes
+      when: prom_deploy.rc == 0
+
+    - name: Wait for Loki pod to be ready
+      shell: |
+        kubectl wait --for=condition=ready pod -l app=loki -n {{ monitoring_namespace }} --timeout=300s
+      register: loki_wait
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display monitoring access info
+      debug:
+        msg:
+          - "Grafana:     http://192.168.4.168:30000 (or any node IP:30000)"
+          - "Login:       admin / admin"
+          - "Prometheus:  http://localhost:9090 (via port-forward)"
+          - "Loki:        http://loki.monitoring.svc.cluster.local:3100"
+          - ""
+          - "Data sources configured:"
+          - "  - Prometheus (metrics)"
+          - "  - Loki (logs)"

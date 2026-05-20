@@ -1,0 +1,203 @@
+---
+# OpenSCAP Container Compliance Scan
+# Targets: running containers (pods) on Kubernetes nodes
+#
+# Injects the host oscap binary + shared libraries into each container's /tmp
+# and executes via nsenter so the scan runs inside the container namespaces.
+# Only scans containers with a writable /tmp and a recognized OS (Ubuntu,
+# Debian, RHEL).  Distroless, Alpine, and other bases are skipped.
+#
+# Reports are fetched back to the controller under:
+#   reports/containers/<hostname>/
+#
+- name: OpenSCAP Container Compliance Scan
+  hosts: k8s_cluster
+  become: yes
+  gather_facts: no
+
+  vars:
+    ssg_version: "0.1.76"
+    ssg_url: "https://github.com/ComplianceAsCode/content/releases/download/v{{ ssg_version }}/scap-security-guide-{{ ssg_version }}.zip"
+    ssg_extract_dir: "/tmp/scap-security-guide-{{ ssg_version }}"
+    reports_dir: "/tmp/openscap-reports/containers"
+    local_reports_base: "{{ playbook_dir }}/../reports/containers"
+
+  tasks:
+    - name: Ensure OpenSCAP tools and dependencies are installed
+      ansible.builtin.apt:
+        name:
+          - openscap-scanner
+          - openscap-utils
+          - libopenscap25t64
+          - unzip
+          - curl
+          - jq
+        state: present
+        update_cache: yes
+
+    - name: Create remote reports directory
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download SCAP Security Guide (SSG)
+      ansible.builtin.get_url:
+        url: "{{ ssg_url }}"
+        dest: "/tmp/ssg-{{ ssg_version }}.zip"
+        mode: '0644'
+      register: ssg_download
+
+    - name: Extract SCAP Security Guide
+      ansible.builtin.unarchive:
+        src: "/tmp/ssg-{{ ssg_version }}.zip"
+        dest: "/tmp/"
+        remote_src: yes
+        creates: "{{ ssg_extract_dir }}"
+
+    - name: Build portable oscap package on node
+      ansible.builtin.shell: |
+        set -euo pipefail
+        PKG="/tmp/oscap-portable"
+        if [ -f "$PKG/oscap" ] && [ -f "$PKG/ld-linux-x86-64.so.2" ]; then
+          echo "EXISTS"
+          exit 0
+        fi
+        mkdir -p "$PKG"
+        cp /usr/bin/oscap "$PKG/"
+        cp /lib64/ld-linux-x86-64.so.2 "$PKG/"
+        ldd /usr/bin/oscap | awk '{print $3}' | grep '^/' | sort -u | while read lib; do
+          cp "$lib" "$PKG/"
+        done
+        echo "BUILT"
+      register: oscap_pkg_build
+      changed_when: "'BUILT' in oscap_pkg_build.stdout"
+
+    - name: Deploy container scan script
+      ansible.builtin.copy:
+        dest: "/tmp/container_openscap_scan.sh"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          set -uo pipefail
+          SSG_DIR="{{ ssg_extract_dir }}"
+          REPORTS_DIR="{{ reports_dir }}"
+          OSCAP_PKG="/tmp/oscap-portable"
+          mkdir -p "$REPORTS_DIR"
+
+          for cid in $(crictl ps -q 2>/dev/null); do
+            info=$(crictl inspect "$cid" 2>/dev/null)
+            pid=$(echo "$info" | jq -r '.info.pid // empty')
+            [ -z "$pid" ] && continue
+            [ "$pid" = "0" ] && continue
+
+            if [ ! -d "/proc/$pid/root/tmp" ] || [ ! -w "/proc/$pid/root/tmp" ]; then
+              echo "SKIP $cid: /tmp not writable"
+              continue
+            fi
+
+            if [ -f "/proc/$pid/root/etc/os-release" ]; then
+              id=$(grep '^ID=' "/proc/$pid/root/etc/os-release" | cut -d= -f2 | tr -d '"')
+              version_id=$(grep '^VERSION_ID=' "/proc/$pid/root/etc/os-release" | cut -d= -f2 | tr -d '"')
+              pretty=$(grep '^PRETTY_NAME=' "/proc/$pid/root/etc/os-release" | cut -d= -f2 | tr -d '"' || echo "$id")
+            else
+              echo "SKIP $cid: no os-release"
+              continue
+            fi
+
+            ds=""
+            profile=""
+            case "$id" in
+              ubuntu)
+                case "$version_id" in
+                  22.04) ds="$SSG_DIR/ssg-ubuntu2204-ds.xml"; profile="xccdf_org.ssgproject.content_profile_cis_level1_server" ;;
+                  24.04|24.10) ds="$SSG_DIR/ssg-ubuntu2404-ds.xml"; profile="xccdf_org.ssgproject.content_profile_cis_level1_server" ;;
+                  20.04) ds="$SSG_DIR/ssg-ubuntu2004-ds.xml"; profile="xccdf_org.ssgproject.content_profile_cis_level1_server" ;;
+                esac
+                ;;
+              debian)
+                case "$version_id" in
+                  11) ds="$SSG_DIR/ssg-debian11-ds.xml"; profile="xccdf_org.ssgproject.content_profile_standard" ;;
+                  12) ds="$SSG_DIR/ssg-debian12-ds.xml"; profile="xccdf_org.ssgproject.content_profile_standard" ;;
+                esac
+                ;;
+              rhel|redhat)
+                case "$version_id" in
+                  8*) ds="$SSG_DIR/ssg-rhel8-ds.xml"; profile="xccdf_org.ssgproject.content_profile_cis" ;;
+                  9*) ds="$SSG_DIR/ssg-rhel9-ds.xml"; profile="xccdf_org.ssgproject.content_profile_cis" ;;
+                esac
+                ;;
+            esac
+
+            [ -z "$ds" ] && { echo "SKIP $cid: unsupported OS $id $version_id"; continue; }
+            [ -f "$ds" ] || { echo "SKIP $cid: datastream not found $ds"; continue; }
+
+            short_cid="${cid:0:12}"
+            echo "SCAN $short_cid ($pretty)"
+
+            ct_tmp="/proc/$pid/root/tmp/oscap-scan"
+            rm -rf "$ct_tmp"
+            mkdir -p "$ct_tmp"
+
+            cp "$OSCAP_PKG"/* "$ct_tmp/"
+            cp "$ds" "$ct_tmp/ds.xml"
+
+            nsenter -t "$pid" -m -u -i -n -p -- \
+              /tmp/oscap-scan/ld-linux-x86-64.so.2 \
+              --library-path /tmp/oscap-scan \
+              /tmp/oscap-scan/oscap \
+              xccdf eval \
+              --profile "$profile" \
+              --results "/tmp/oscap-scan/results.xml" \
+              --report "/tmp/oscap-scan/report.html" \
+              --fetch-remote-resources \
+              "/tmp/oscap-scan/ds.xml" || true
+
+            cp "/proc/$pid/root/tmp/oscap-scan/results.xml" "$REPORTS_DIR/${short_cid}-results.xml" 2>/dev/null || true
+            cp "/proc/$pid/root/tmp/oscap-scan/report.html" "$REPORTS_DIR/${short_cid}-report.html" 2>/dev/null || true
+            rm -rf "$ct_tmp"
+            echo "DONE $short_cid"
+          done
+      register: scan_script
+
+    - name: Run container scan script
+      ansible.builtin.shell: "/tmp/container_openscap_scan.sh"
+      register: scan_output
+      changed_when: true
+
+    - name: Show scan output
+      ansible.builtin.debug:
+        var: scan_output.stdout_lines
+
+    - name: Find generated reports
+      ansible.builtin.find:
+        paths: "{{ reports_dir }}"
+        patterns:
+          - "*-results.xml"
+          - "*-report.html"
+      register: report_files
+
+    - name: Create local report directory on controller
+      ansible.builtin.file:
+        path: "{{ local_reports_base }}/{{ inventory_hostname }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      become: no
+
+    - name: Fetch reports from nodes to controller
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ local_reports_base }}/{{ inventory_hostname }}/"
+        flat: yes
+      loop: "{{ report_files.files }}"
+      when: report_files.files | length > 0
+      ignore_errors: yes
+
+    - name: Display completion summary
+      ansible.builtin.debug:
+        msg: |
+          Container scan on {{ inventory_hostname }} complete.
+          Reports: {{ report_files.files | default([]) | length }} file(s)
+          Location: {{ local_reports_base }}/{{ inventory_hostname }}/
+          Output: {{ scan_output.stdout_lines | default([]) }}
